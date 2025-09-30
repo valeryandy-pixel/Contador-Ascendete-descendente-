@@ -1,0 +1,265 @@
+from TM1638 import TM1638
+from machine import Pin, PWM
+import time
+import random
+import _thread
+
+
+stb_pin = 15
+clk_pin = 2
+dio_pin = 4
+
+servo = PWM(Pin(27))
+servo.freq(50)
+motor_pins = (5,18,19,21)
+
+
+
+
+print("Inciando programa...")
+print("1. Ver fecha y hora actual")
+print("2. Controlar servomotor")
+print("3. Controlar motor paso a paso")
+print()
+
+tm1638 = TM1638(stb_pin, clk_pin, dio_pin)
+tm1638.init()
+tm1638.displayNumber(00000000)
+
+boton = 0
+a = 0
+
+i = 0  # Puntero del vector
+der = False
+izq = False
+contador_pasos = 0
+giros = 0.0
+lock = _thread.allocate_lock()
+
+
+def hora():
+        unix_time = time.time()
+        año, mes, dia, hora, minuto, segundo, _, _ = time.localtime(unix_time)
+        
+        print(f"Fecha: {dia:02}/{mes:02}/{año}")
+        print(f"Hora:  {hora:02}:{minuto:02}:{segundo:02}")
+        print("-------------------")
+        
+        num_hora = (hora * 10000 + minuto * 100 + segundo)
+        
+        tm1638.displayNumber(num_hora)
+        time.sleep(4)
+        
+        
+def motorservo():
+    global boton
+
+    MINIMO = 550000   # 0°
+    MAXIMO = 2400000   # 180°
+    servo.duty_ns(MINIMO)
+    angulo = 0
+    
+    print("Servomotor:")
+    print("Botón 1: de 0° a 180°")
+    print("Botón 2: 0°")
+    print("Botón 3: 90°")
+    print("Botón 4: 180°")
+    print("Botón 5: Seleccionar duty")
+    print("Botón 8: Volver")
+    
+    while True:
+        
+        keys = tm1638.readKeys()
+        
+        if (keys != 0):
+            for i in range(8):
+                if (keys == (0x01 << i) & 0xFF):
+                    time.sleep(0.3)
+                    print(f"Boton {i+1} presionado")
+                    boton = i + 1
+        
+        if boton == 1:
+            print("Girando motor de 0° a 180°")
+            for duty in range (MINIMO, MAXIMO, 5000):
+                angulo = (duty - MINIMO) * 180 / (MAXIMO - MINIMO)
+                print("Duty:", duty, "ns  ->  Ángulo aprox:", round(angulo, 1), "°")
+                servo.duty_ns(duty)
+                tm1638.displayNumber(int(angulo))
+                time.sleep(0.02)
+            boton = 0
+            return
+        elif boton == 2:
+            duty = 550000
+            angulo = 0
+            print("Motor en 0°")
+            print(f"Duty: 550000ns -> Ángulo: 0°")
+            servo.duty_ns(duty)
+            tm1638.displayNumber(angulo)
+            time.sleep(2)
+            boton = 0
+            return
+        elif boton == 3:
+            duty = 1475000
+            angulo = 90
+            print("Motor en 90°")
+            print(f"Duty: 1475000ns -> Ángulo: 90°")
+            servo.duty_ns(duty)
+            tm1638.displayNumber(angulo)
+            time.sleep(2)
+            boton = 0
+            return
+        elif boton == 4:
+            duty = 2400000
+            angulo = 180
+            print("Motor en 180°")
+            print(f"Duty: 2400000ns -> Ángulo: 180°")
+            servo.duty_ns(duty)
+            tm1638.displayNumber(angulo)
+            time.sleep(2)
+            boton = 0
+            return
+        elif boton == 5:
+            duty = int(input("Selecione un duty entre 550000 y 2400000"))
+            angulo = (duty - MINIMO) * 180 / (MAXIMO - MINIMO)
+            print(f"Duty: {duty}ns -> Ángulo: {angulo}°")
+            servo.duty_ns(duty)
+            tm1638.displayNumber(int(angulo))
+            time.sleep(2)
+            boton = 0
+            return
+        elif boton == 8 :
+            boton = 0
+            return
+        
+def motorpaso():
+
+        
+    # Definición de pines para las bobinas del motor
+   
+    bobinas = [Pin(motor_pins[i], Pin.OUT) for i in range(4)]
+
+    led = Pin(2, Pin.OUT)
+
+  
+    pasos = (0xC, 0x6, 0x3, 0x9)   # [1100, 0110, 0011, 1001]
+
+   
+
+    def sacar_datos(datos):
+        """Enciende bobinas según patrón binario"""
+        for j in range(4):
+            bit = (datos >> j) & 0x01
+            bobinas[j].value(bit)
+
+    def motor_paso_der():
+        global i, der, contador_pasos, giros
+        while True:
+            if der:
+                lock.acquire()
+                i = (i + 1) % 4
+                sacar_datos(pasos[i])
+                contador_pasos += 1
+                if contador_pasos % 64 == 0:
+                    giros = contador_pasos / (64 * 8)
+                    print(f"Giro derecha {giros:.2f}")
+                lock.release()
+                time.sleep(0.01)
+
+    def motor_paso_izq():
+        global i, izq, contador_pasos, giros
+        while True:
+            if izq:
+                lock.acquire()
+                i = (i - 1) % 4
+                sacar_datos(pasos[i])
+                contador_pasos -= 1
+                if contador_pasos % 64 == 0:
+                    giros = contador_pasos / (64 * 8)
+                    print(f"Giro izquierda {giros:.2f}")
+                lock.release()
+                time.sleep(0.01)
+
+    def recibir_datos():
+        global der, izq, boton
+        
+        
+    
+        print("Motor paso a paso:")
+        print("Botón 1: gira a la derecha")
+        print("Botón 2: gira a la izquierda")
+        print("Botón 3: stop")
+        
+        while True:
+            keys = tm1638.readKeys()
+        
+            if (keys != 0):
+                for n in range(8):
+                    if (keys == (0x01 << n) & 0xFF):
+                        time.sleep(0.3)
+                        print(f"Boton {n+1} presionado")
+                        boton = n + 1
+            
+            if boton == 1:
+                print("gira a la derecha")
+                der = True
+                izq = False
+                boton = 0
+                
+            
+            elif boton == 2:
+                der = False
+                izq = True
+                boton = 0
+                
+            elif boton == 3:
+                der = False
+                izq = False
+                boton = 0
+                
+            else:
+                der = False
+                izq = False
+                boton = 0
+                
+            time.sleep(0.1)
+
+    # Inicialización
+    sacar_datos(0)  # motor apagado
+    time.sleep(1)
+
+    # Inicio de hilos
+    _thread.start_new_thread(motor_paso_der, ())
+    _thread.start_new_thread(motor_paso_izq, ())
+    _thread.start_new_thread(recibir_datos, ())
+
+    print("Arranque...")
+
+    # Parpadeo LED mientras el motor está activo
+    while True:
+        led.value(1)
+        time.sleep(0.5)
+        led.value(0)
+        time.sleep(0.5)
+
+            
+        
+        
+        
+menu = {
+    1: hora,
+    2: motorservo,
+    3: motorpaso
+
+}
+    
+while True:
+    tm1638.clearLeds()
+    tm1638.clearDisplay()
+    
+    selec = int(input("Seleccione la acción que desea realizar  "))
+    if selec in menu:
+        menu[selec]()
+        
+        
+    
+    
